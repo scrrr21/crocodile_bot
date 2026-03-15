@@ -17,12 +17,13 @@ from database import (
     add_leader,
     add_explained,
     get_top,
+    get_chat_stats,
     get_bonuses,
     use_bonus
 )
 
-from utils import user_link
 import game
+from utils import user_link
 
 
 bot = Bot(
@@ -34,20 +35,22 @@ dp = Dispatcher()
 
 admin_wait = set()
 
+queue_data = {}
+
 
 # ---------- КНОПКИ ----------
 
-def game_kb():
+def game_keyboard():
 
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="Посмотреть слово",
+                    text="👁 Посмотреть слово",
                     callback_data="show_word"
                 ),
                 InlineKeyboardButton(
-                    text="Новое слово",
+                    text="🔄 Новое слово",
                     callback_data="new_word"
                 )
             ]
@@ -55,7 +58,7 @@ def game_kb():
     )
 
 
-def new_leader_kb():
+def new_leader_keyboard():
 
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -69,21 +72,35 @@ def new_leader_kb():
     )
 
 
-def queue_menu():
+def queue_keyboard():
 
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="Создать очередь", callback_data="queue_create")],
-            [InlineKeyboardButton(text="Встать в очередь", callback_data="queue_join")],
-            [InlineKeyboardButton(text="Какая очередь?", callback_data="queue_list")],
-            [InlineKeyboardButton(text="Остановить очередь", callback_data="queue_stop")]
+            [
+                InlineKeyboardButton(
+                    text="➕ Встать в очередь",
+                    callback_data="queue_join"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="📜 Показать очередь",
+                    callback_data="queue_show"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🛑 Очистить очередь",
+                    callback_data="queue_clear"
+                )
+            ]
         ]
     )
 
 
 # ---------- УТИЛИТЫ ----------
 
-def normalize(text: str):
+def normalize(text):
 
     return (
         text.lower()
@@ -104,7 +121,7 @@ async def cmd_game(message: Message):
     if game.is_running(chat):
 
         await message.answer(
-            "Раунд уже идет",
+            "Раунд уже идет!",
             disable_web_page_preview=True
         )
         return
@@ -115,7 +132,7 @@ async def cmd_game(message: Message):
 
     await message.answer(
         f"{user_link(user)} объясняет слово!",
-        reply_markup=game_kb(),
+        reply_markup=game_keyboard(),
         disable_web_page_preview=True
     )
 
@@ -132,9 +149,6 @@ async def cb_show_word(callback: CallbackQuery):
         return
 
     g = game.games.get(chat)
-
-    if not g:
-        return
 
     if user.id != g["leader"]:
 
@@ -160,9 +174,6 @@ async def cb_new_word(callback: CallbackQuery):
         return
 
     g = game.games.get(chat)
-
-    if not g:
-        return
 
     if user.id != g["leader"]:
 
@@ -191,7 +202,7 @@ async def cb_new_leader(callback: CallbackQuery):
     if game.is_running(chat):
 
         await callback.answer(
-            "Раунд уже идет",
+            "Раунд уже идет!",
             show_alert=True
         )
         return
@@ -202,12 +213,12 @@ async def cb_new_leader(callback: CallbackQuery):
 
     await callback.message.answer(
         f"{user_link(user)} объясняет слово!",
-        reply_markup=game_kb(),
+        reply_markup=game_keyboard(),
         disable_web_page_preview=True
     )
 
 
-# ---------- КОМАНДЫ ----------
+# ---------- RATING ----------
 
 @dp.message(Command("rating"))
 async def cmd_rating(message: Message):
@@ -217,22 +228,60 @@ async def cmd_rating(message: Message):
     if not top:
 
         await message.answer(
-            "Пока нет рейтинга",
+            "Рейтинг пока пуст.",
             disable_web_page_preview=True
         )
         return
 
-    text = "<b>Рейтинг игроков</b>\n\n"
+    text = "🏆 <b>Рейтинг игроков</b>\n\n"
 
     for i, (name, score) in enumerate(top, start=1):
 
-        text += f"{i}. {name} — {score}\n"
+        medal = ""
+
+        if i == 1:
+            medal = "🥇"
+        elif i == 2:
+            medal = "🥈"
+        elif i == 3:
+            medal = "🥉"
+
+        text += f"{medal} <b>{i}.</b> {name} — <b>{score}</b>\n"
 
     await message.answer(
         text,
         disable_web_page_preview=True
     )
 
+
+# ---------- STATS ----------
+
+@dp.message(Command("stats"))
+async def cmd_stats(message: Message):
+
+    user = message.from_user
+
+    stats = await get_chat_stats(user.id, message.chat.id)
+
+    explained = stats["explained"]
+    guessed = stats["guessed"]
+    leader = stats["leader"]
+
+    text = (
+        f"📊 <b>Статистика</b>\n\n"
+        f"👤 Игрок: {user_link(user)}\n\n"
+        f"🎤 Ведущий: <b>{leader}</b>\n"
+        f"🧠 Угадано: <b>{guessed}</b>\n"
+        f"💬 Объяснено: <b>{explained}</b>"
+    )
+
+    await message.answer(
+        text,
+        disable_web_page_preview=True
+    )
+
+
+# ---------- BONUS ----------
 
 @dp.message(Command("bonus"))
 async def cmd_bonus(message: Message):
@@ -243,7 +292,7 @@ async def cmd_bonus(message: Message):
     if not game.is_running(chat):
 
         await message.answer(
-            "Игра не идет",
+            "Сейчас нет активного раунда.",
             disable_web_page_preview=True
         )
         return
@@ -253,7 +302,7 @@ async def cmd_bonus(message: Message):
     if user.id == g["leader"]:
 
         await message.answer(
-            "Ты ведущий",
+            "Ведущий не может использовать бонус.",
             disable_web_page_preview=True
         )
         return
@@ -263,7 +312,7 @@ async def cmd_bonus(message: Message):
     if bonuses <= 0:
 
         await message.answer(
-            "У тебя нет бонусов",
+            "У тебя нет бонусов.",
             disable_web_page_preview=True
         )
         return
@@ -273,30 +322,76 @@ async def cmd_bonus(message: Message):
     hint = g["word"][:2] + "..."
 
     await message.answer(
-        f"Подсказка: {hint}",
+        f"💡 Подсказка: <b>{hint}</b>",
         disable_web_page_preview=True
     )
 
+
+# ---------- QUEUE ----------
 
 @dp.message(Command("queue"))
 async def cmd_queue(message: Message):
 
     await message.answer(
-        "Меню очереди:",
-        reply_markup=queue_menu(),
+        "⚙️ <b>Меню очереди</b>",
+        reply_markup=queue_keyboard(),
         disable_web_page_preview=True
     )
 
+
+@dp.callback_query(F.data == "queue_join")
+async def queue_join(callback: CallbackQuery):
+
+    chat = callback.message.chat.id
+    user = callback.from_user
+
+    queue = queue_data.setdefault(chat, [])
+
+    if user.id not in queue:
+        queue.append(user.id)
+
+    await callback.answer("Ты добавлен в очередь!")
+
+
+@dp.callback_query(F.data == "queue_show")
+async def queue_show(callback: CallbackQuery):
+
+    chat = callback.message.chat.id
+
+    queue = queue_data.get(chat, [])
+
+    if not queue:
+
+        await callback.message.answer("Очередь пустая.")
+        return
+
+    text = "📜 <b>Очередь игроков</b>\n\n"
+
+    for i, uid in enumerate(queue, start=1):
+
+        text += f"{i}. <code>{uid}</code>\n"
+
+    await callback.message.answer(text)
+
+
+@dp.callback_query(F.data == "queue_clear")
+async def queue_clear(callback: CallbackQuery):
+
+    chat = callback.message.chat.id
+
+    queue_data[chat] = []
+
+    await callback.answer("Очередь очищена")
+
+
+# ---------- ADMIN ----------
 
 @dp.message(Command("admin"))
 async def cmd_admin(message: Message):
 
     admin_wait.add(message.from_user.id)
 
-    await message.answer(
-        "Введите admin код:",
-        disable_web_page_preview=True
-    )
+    await message.answer("Введите admin код:")
 
 
 # ---------- УГАДЫВАНИЕ ----------
@@ -308,37 +403,24 @@ async def guess_handler(message: Message):
     user = message.from_user
     text = message.text
 
-    # ADMIN LOGIN
-
     if user.id in admin_wait:
 
         if text == ADMIN_CODE:
 
             admin_wait.remove(user.id)
 
-            await message.answer(
-                "Админ панель активирована",
-                disable_web_page_preview=True
-            )
+            await message.answer("Админ доступ получен")
 
         else:
 
-            await message.answer(
-                "Неверный код",
-                disable_web_page_preview=True
-            )
+            await message.answer("Неверный код")
 
         return
-
-    # GAME
 
     if not game.is_running(chat):
         return
 
     g = game.games.get(chat)
-
-    if not g:
-        return
 
     if user.id == g["leader"]:
         return
@@ -350,8 +432,7 @@ async def guess_handler(message: Message):
 
         await message.answer(
             f"{user_link(user)} отгадал(-а) слово <b>{g['word']}</b>",
-            reply_markup=new_leader_kb(),
-            disable_web_page_preview=True
+            reply_markup=new_leader_keyboard()
         )
 
         game.finish_game(chat)
@@ -365,19 +446,9 @@ async def main():
 
     me = await bot.get_me()
 
-    print("Бот запущен:", me.username)
+    print("Bot started:", me.username)
 
-    while True:
-
-        try:
-
-            await dp.start_polling(bot)
-
-        except Exception as e:
-
-            print("Ошибка:", e)
-
-            await asyncio.sleep(5)
+    await dp.start_polling(bot)
 
 
 if __name__ == "__main__":
