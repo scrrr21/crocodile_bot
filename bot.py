@@ -1,6 +1,5 @@
 import asyncio
 import re
-import time
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
@@ -26,12 +25,7 @@ import game
 bot = Bot(TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 dp = Dispatcher()
 
-queue_states = {}
-
-admin_sessions = set()
-
-QUEUE_TIMEOUT = 900
-QUEUE_TURN_TIMEOUT = 90
+admin_wait = set()
 
 
 # ---------- КНОПКИ ----------
@@ -55,15 +49,6 @@ def new_leader_kb():
     )
 
 
-def admin_menu():
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="📢 Объявление", callback_data="admin_broadcast")],
-            [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")]
-        ]
-    )
-
-
 def queue_menu():
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -75,10 +60,25 @@ def queue_menu():
     )
 
 
+def admin_menu():
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📢 Объявление", callback_data="admin_broadcast")],
+            [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")]
+        ]
+    )
+
+
 # ---------- УТИЛИТЫ ----------
 
-def normalize(text):
-    return text.lower().replace("ё", "е").strip()
+def normalize(text: str):
+
+    return (
+        text.lower()
+        .replace("ё", "е")
+        .replace("-", "")
+        .strip()
+    )
 
 
 # ---------- GAME ----------
@@ -89,10 +89,8 @@ async def game_cmd(message: Message):
     chat = message.chat.id
     user = message.from_user
 
-    if not user:
-        return
-
     if game.is_running(chat):
+
         await message.answer(
             "Раунд уже идет",
             disable_web_page_preview=True
@@ -123,9 +121,6 @@ async def show_word(callback: CallbackQuery):
 
     g = game.games.get(chat)
 
-    if not g:
-        return
-
     if user.id != g["leader"]:
         await callback.answer("Ты не ведущий!", show_alert=True)
         return
@@ -147,9 +142,6 @@ async def new_word(callback: CallbackQuery):
 
     g = game.games.get(chat)
 
-    if not g:
-        return
-
     if user.id != g["leader"]:
         await callback.answer("Ты не ведущий!", show_alert=True)
         return
@@ -167,7 +159,7 @@ async def new_word(callback: CallbackQuery):
 # ---------- УГАДЫВАНИЕ ----------
 
 @dp.message()
-async def guess(message: Message):
+async def guess_handler(message: Message):
 
     if not message.text:
         return
@@ -175,6 +167,29 @@ async def guess(message: Message):
     chat = message.chat.id
     user = message.from_user
 
+    # admin login
+    if user.id in admin_wait:
+
+        if message.text == ADMIN_CODE:
+
+            admin_wait.remove(user.id)
+
+            await message.answer(
+                "Админ панель",
+                reply_markup=admin_menu(),
+                disable_web_page_preview=True
+            )
+
+        else:
+
+            await message.answer(
+                "Неверный код",
+                disable_web_page_preview=True
+            )
+
+        return
+
+    # game guess
     if not game.is_running(chat):
         return
 
@@ -208,9 +223,6 @@ async def become_leader(callback: CallbackQuery):
     chat = callback.message.chat.id
     user = callback.from_user
 
-    if not user:
-        return
-
     if game.is_running(chat):
         await callback.answer("Раунд уже идет", True)
         return
@@ -234,15 +246,17 @@ async def rating_cmd(message: Message):
     top = await get_top(message.chat.id)
 
     if not top:
+
         await message.answer(
             "Пока нет рейтинга",
             disable_web_page_preview=True
         )
         return
 
-    text = "<b>Рейтинг игроков</b>\n\n"
+    text = "<b>Рейтинг</b>\n\n"
 
     for i, (name, score) in enumerate(top, start=1):
+
         text += f"{i}. {name} — {score}\n"
 
     await message.answer(text, disable_web_page_preview=True)
@@ -257,6 +271,7 @@ async def bonus_cmd(message: Message):
     user = message.from_user
 
     if not game.is_running(chat):
+
         await message.answer(
             "Игра не идет",
             disable_web_page_preview=True
@@ -266,6 +281,7 @@ async def bonus_cmd(message: Message):
     g = game.games.get(chat)
 
     if user.id == g["leader"]:
+
         await message.answer(
             "Ты ведущий",
             disable_web_page_preview=True
@@ -275,17 +291,16 @@ async def bonus_cmd(message: Message):
     bonuses = await get_bonuses(user.id, chat)
 
     if bonuses <= 0:
+
         await message.answer(
-            "Нет бонусов",
+            "У тебя нет бонусов",
             disable_web_page_preview=True
         )
         return
 
     await use_bonus(user.id, chat)
 
-    word = g["word"]
-
-    hint = word[:2] + "..."
+    hint = g["word"][:2] + "..."
 
     await message.answer(
         f"Подсказка: {hint}",
@@ -299,7 +314,7 @@ async def bonus_cmd(message: Message):
 async def queue_cmd(message: Message):
 
     await message.answer(
-        "Настройки очереди:",
+        "Меню очереди:",
         reply_markup=queue_menu(),
         disable_web_page_preview=True
     )
@@ -310,35 +325,10 @@ async def queue_cmd(message: Message):
 @dp.message(Command("admin"))
 async def admin_cmd(message: Message):
 
+    admin_wait.add(message.from_user.id)
+
     await message.answer(
         "Введите admin код:",
-        disable_web_page_preview=True
-    )
-
-    admin_sessions.add(message.from_user.id)
-
-
-@dp.message()
-async def admin_login(message: Message):
-
-    user = message.from_user.id
-
-    if user not in admin_sessions:
-        return
-
-    if message.text != ADMIN_CODE:
-
-        await message.answer(
-            "Неверный код",
-            disable_web_page_preview=True
-        )
-        return
-
-    admin_sessions.remove(user)
-
-    await message.answer(
-        "Админ панель",
-        reply_markup=admin_menu(),
         disable_web_page_preview=True
     )
 
@@ -356,14 +346,16 @@ async def main():
     while True:
 
         try:
+
             await dp.start_polling(bot)
 
         except Exception as e:
 
-            print("Ошибка polling:", e)
+            print("Ошибка:", e)
 
             await asyncio.sleep(5)
 
 
 if __name__ == "__main__":
+
     asyncio.run(main())
