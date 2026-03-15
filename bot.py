@@ -1,7 +1,12 @@
 import asyncio
 
 from aiogram import Bot, Dispatcher, F
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import (
+    Message,
+    CallbackQuery,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton
+)
 from aiogram.filters import Command
 from aiogram.client.default import DefaultBotProperties
 
@@ -12,7 +17,6 @@ from database import (
     add_leader,
     add_explained,
     get_top,
-    get_chat_stats,
     get_bonuses,
     use_bonus
 )
@@ -21,7 +25,11 @@ from utils import user_link
 import game
 
 
-bot = Bot(TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
+bot = Bot(
+    TOKEN,
+    default=DefaultBotProperties(parse_mode="HTML")
+)
+
 dp = Dispatcher()
 
 admin_wait = set()
@@ -34,8 +42,14 @@ def game_kb():
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="Посмотреть слово", callback_data="show_word"),
-                InlineKeyboardButton(text="Новое слово", callback_data="new_word")
+                InlineKeyboardButton(
+                    text="Посмотреть слово",
+                    callback_data="show_word"
+                ),
+                InlineKeyboardButton(
+                    text="Новое слово",
+                    callback_data="new_word"
+                )
             ]
         ]
     )
@@ -67,19 +81,9 @@ def queue_menu():
     )
 
 
-def admin_menu():
-
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="📢 Объявление", callback_data="admin_broadcast")],
-            [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")]
-        ]
-    )
-
-
 # ---------- УТИЛИТЫ ----------
 
-def normalize(text):
+def normalize(text: str):
 
     return (
         text.lower()
@@ -92,7 +96,7 @@ def normalize(text):
 # ---------- GAME ----------
 
 @dp.message(Command("game"))
-async def game_cmd(message: Message):
+async def cmd_game(message: Message):
 
     chat = message.chat.id
     user = message.from_user
@@ -116,10 +120,10 @@ async def game_cmd(message: Message):
     )
 
 
-# ---------- КНОПКИ ----------
+# ---------- CALLBACK КНОПКИ ----------
 
 @dp.callback_query(F.data == "show_word")
-async def show_word(callback: CallbackQuery):
+async def cb_show_word(callback: CallbackQuery):
 
     chat = callback.message.chat.id
     user = callback.from_user
@@ -128,6 +132,9 @@ async def show_word(callback: CallbackQuery):
         return
 
     g = game.games.get(chat)
+
+    if not g:
+        return
 
     if user.id != g["leader"]:
 
@@ -144,7 +151,7 @@ async def show_word(callback: CallbackQuery):
 
 
 @dp.callback_query(F.data == "new_word")
-async def new_word(callback: CallbackQuery):
+async def cb_new_word(callback: CallbackQuery):
 
     chat = callback.message.chat.id
     user = callback.from_user
@@ -153,6 +160,9 @@ async def new_word(callback: CallbackQuery):
         return
 
     g = game.games.get(chat)
+
+    if not g:
+        return
 
     if user.id != g["leader"]:
 
@@ -172,10 +182,8 @@ async def new_word(callback: CallbackQuery):
     )
 
 
-# ---------- НОВЫЙ ВЕДУЩИЙ ----------
-
 @dp.callback_query(F.data == "become_leader")
-async def become_leader(callback: CallbackQuery):
+async def cb_new_leader(callback: CallbackQuery):
 
     chat = callback.message.chat.id
     user = callback.from_user
@@ -184,7 +192,7 @@ async def become_leader(callback: CallbackQuery):
 
         await callback.answer(
             "Раунд уже идет",
-            True
+            show_alert=True
         )
         return
 
@@ -199,10 +207,10 @@ async def become_leader(callback: CallbackQuery):
     )
 
 
-# ---------- RATING ----------
+# ---------- КОМАНДЫ ----------
 
 @dp.message(Command("rating"))
-async def rating_cmd(message: Message):
+async def cmd_rating(message: Message):
 
     top = await get_top(message.chat.id)
 
@@ -220,13 +228,14 @@ async def rating_cmd(message: Message):
 
         text += f"{i}. {name} — {score}\n"
 
-    await message.answer(text, disable_web_page_preview=True)
+    await message.answer(
+        text,
+        disable_web_page_preview=True
+    )
 
-
-# ---------- BONUS ----------
 
 @dp.message(Command("bonus"))
-async def bonus_cmd(message: Message):
+async def cmd_bonus(message: Message):
 
     chat = message.chat.id
     user = message.from_user
@@ -269,10 +278,8 @@ async def bonus_cmd(message: Message):
     )
 
 
-# ---------- QUEUE ----------
-
 @dp.message(Command("queue"))
-async def queue_cmd(message: Message):
+async def cmd_queue(message: Message):
 
     await message.answer(
         "Меню очереди:",
@@ -281,10 +288,8 @@ async def queue_cmd(message: Message):
     )
 
 
-# ---------- ADMIN ----------
-
 @dp.message(Command("admin"))
-async def admin_cmd(message: Message):
+async def cmd_admin(message: Message):
 
     admin_wait.add(message.from_user.id)
 
@@ -296,12 +301,14 @@ async def admin_cmd(message: Message):
 
 # ---------- УГАДЫВАНИЕ ----------
 
-@dp.message(F.text)
+@dp.message(F.text & ~F.text.startswith("/"))
 async def guess_handler(message: Message):
 
     chat = message.chat.id
     user = message.from_user
     text = message.text
+
+    # ADMIN LOGIN
 
     if user.id in admin_wait:
 
@@ -310,8 +317,7 @@ async def guess_handler(message: Message):
             admin_wait.remove(user.id)
 
             await message.answer(
-                "Админ панель",
-                reply_markup=admin_menu(),
+                "Админ панель активирована",
                 disable_web_page_preview=True
             )
 
@@ -324,10 +330,15 @@ async def guess_handler(message: Message):
 
         return
 
+    # GAME
+
     if not game.is_running(chat):
         return
 
     g = game.games.get(chat)
+
+    if not g:
+        return
 
     if user.id == g["leader"]:
         return
