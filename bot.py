@@ -13,6 +13,7 @@ from aiogram.filters import Command
 from aiogram.client.default import DefaultBotProperties
 
 from config import TOKEN, ADMIN_CODE
+
 from database import (
     init_db,
     add_guess,
@@ -112,7 +113,6 @@ def parse_queue(text):
     result = []
 
     for u in usernames:
-
         if u.lower() not in seen:
             seen.add(u.lower())
             result.append(u)
@@ -138,7 +138,8 @@ async def start_queue_turn(chat):
     await bot.send_message(
         chat,
         f"Очередь: {username}\nУ него есть 90 секунд",
-        reply_markup=queue_ready()
+        reply_markup=queue_ready(),
+        disable_web_page_preview=True
     )
 
     async def timeout():
@@ -150,7 +151,11 @@ async def start_queue_turn(chat):
         if not s or not s["waiting"]:
             return
 
-        await bot.send_message(chat, "Игрок пропущен (AFK)")
+        await bot.send_message(
+            chat,
+            "Игрок пропущен (AFK)",
+            disable_web_page_preview=True
+        )
 
         s["waiting"] = False
         s["index"] = (s["index"] + 1) % len(s["users"])
@@ -185,7 +190,8 @@ async def queue_afk_checker():
 
                 await bot.send_message(
                     chat,
-                    "Очередь удалена из-за неактивности"
+                    "Очередь удалена из-за неактивности",
+                    disable_web_page_preview=True
                 )
 
                 queue_states.pop(chat)
@@ -206,7 +212,8 @@ async def help_cmd(message: Message):
         "- Инфо: @CroCodil21bot\n\n"
         "<i>При активном поиске ошибок вы гарантированно получите звезды Telegram!</i>\n\n"
         "Beta V. 0.03.45",
-        reply_markup=help_menu()
+        reply_markup=help_menu(),
+        disable_web_page_preview=True
     )
 
 
@@ -240,7 +247,8 @@ async def rules_cmd(message: Message):
         "/stats — личная статистика\n"
         "/bonus — использовать бонус\n"
         "/queue — настройки очереди\n"
-        "/admin — панель управления (admins only)"
+        "/admin — панель управления (admins only)",
+        disable_web_page_preview=True
     )
 
 
@@ -254,7 +262,10 @@ async def game_cmd(message: Message):
 
     if game.is_running(chat):
 
-        await message.answer("Раунд уже идет")
+        await message.answer(
+            "Раунд уже идет",
+            disable_web_page_preview=True
+        )
         return
 
     game.start_game(chat, user.id)
@@ -263,9 +274,12 @@ async def game_cmd(message: Message):
 
     await message.answer(
         f"{user_link(user)} начинает раунд!",
-        reply_markup=game_kb()
+        reply_markup=game_kb(),
+        disable_web_page_preview=True
     )
 
+
+# ---------- КНОПКИ ИГРЫ (АЛЕРТ) ----------
 
 @dp.callback_query(F.data == "show")
 async def show_word(callback: CallbackQuery):
@@ -279,10 +293,13 @@ async def show_word(callback: CallbackQuery):
     g = game.games.get(chat)
 
     if user.id != g["leader"]:
-        await callback.answer("Ты не ведущий!", True)
+        await callback.answer("Ты не ведущий!", show_alert=True)
         return
 
-    await callback.message.answer(f"Слово: <b>{g['word']}</b>")
+    await callback.answer(
+        f"Слово: {g['word']}",
+        show_alert=True
+    )
 
 
 @dp.callback_query(F.data == "new")
@@ -297,12 +314,17 @@ async def new_word(callback: CallbackQuery):
     g = game.games.get(chat)
 
     if user.id != g["leader"]:
-        await callback.answer("Ты не ведущий!", True)
+        await callback.answer("Ты не ведущий!", show_alert=True)
         return
 
     game.new_word(chat)
 
-    await callback.message.answer("Новое слово выдано")
+    g = game.games.get(chat)
+
+    await callback.answer(
+        f"Новое слово: {g['word']}",
+        show_alert=True
+    )
 
 
 # ---------- GUESS ----------
@@ -328,7 +350,8 @@ async def guess(message: Message):
         await add_explained(g["leader"], chat)
 
         await message.answer(
-            f"{user_link(user)} угадал слово <b>{g['word']}</b>"
+            f"{user_link(user)} угадал слово <b>{g['word']}</b>",
+            disable_web_page_preview=True
         )
 
         game.finish_game(chat)
